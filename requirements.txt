@@ -1,0 +1,2 @@
+# Runtime has no third-party dependency.
+# Python standard library is sufficient for scripts/preview.py and JSON validation.

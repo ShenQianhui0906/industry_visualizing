@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>京津冀产业与政策时空演化分析平台</title>
+    <link rel="stylesheet" href="assets/css/style.css" />
+  </head>
+  <body>
+    <div class="screen-grid" aria-hidden="true"></div>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <div>
+          <p class="eyebrow">JING-JIN-JI INDUSTRY INTELLIGENCE</p>
+          <h1>京津冀产业与政策时空演化分析平台</h1>
+        </div>
+      </div>
+      <div class="status-line">
+        <span id="dataStatus">数据装载中</span>
+        <span>报告版本：2026年4月</span>
+      </div>
+    </header>
+
+    <nav class="nav-tabs" aria-label="页面导航">
+      <button class="active" data-page="home">首页总览</button>
+      <button data-page="region">区域画像</button>
+      <button data-page="evolution">时空演化</button>
+      <button data-page="linkage">政策产业联动</button>
+      <button data-page="topic">产业专题</button>
+      <button data-page="methods">数据与方法</button>
+    </nav>
+
+    <aside class="control-rack dv-border">
+      <label data-control="region">
+        <span>地区</span>
+        <select id="regionSelect"></select>
+      </label>
+      <label data-control="chain">
+        <span>产业链</span>
+        <select id="chainSelect"></select>
+      </label>
+      <label data-control="stage">
+        <span>链条环节</span>
+        <select id="stageSelect"></select>
+      </label>
+      <label data-control="effect">
+        <span>效应视图</span>
+        <select id="effectMode">
+          <option value="static2022">2022静态</option>
+          <option value="static2017">2017静态</option>
+          <option value="dynamic">2017-2022动态</option>
+        </select>
+      </label>
+    </aside>
+
+    <main id="view" class="view" tabindex="-1"></main>
+
+    <template id="panelTemplate">
+      <section class="panel dv-border">
+        <div class="panel-title">
+          <span></span>
+          <small></small>
+        </div>
+        <div class="panel-body"></div>
+      </section>
+    </template>
+
+    <script src="assets/js/app.js" defer></script>
+  </body>
+</html>
