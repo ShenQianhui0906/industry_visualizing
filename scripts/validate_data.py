@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 
@@ -12,13 +13,41 @@ DATA_PATH = ROOT / "data" / "report_data.json"
 REGIONS = ["北京", "天津", "河北"]
 STAGES = ["上游", "中游", "下游"]
 
+sys.path.insert(0, str(ROOT))
+
+from scripts.build_data import aggregate_effect_source_metadata, extract_chain_capital, extract_leading_industries, extract_survey  # noqa: E402
+
 
 def near(a: float, b: float, tol: float = 0.03) -> bool:
     return abs(float(a) - float(b)) <= tol
 
 
+def assert_same(actual, expected, path: str = "data") -> None:
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict), f"{path}: expected dict, got {type(actual).__name__}"
+        assert actual.keys() == expected.keys(), f"{path}: keys differ {actual.keys()} != {expected.keys()}"
+        for key in expected:
+            assert_same(actual[key], expected[key], f"{path}.{key}")
+        return
+    if isinstance(expected, list):
+        assert isinstance(actual, list), f"{path}: expected list, got {type(actual).__name__}"
+        assert len(actual) == len(expected), f"{path}: length differs {len(actual)} != {len(expected)}"
+        for index, item in enumerate(expected):
+            assert_same(actual[index], item, f"{path}[{index}]")
+        return
+    if isinstance(expected, float):
+        assert near(actual, expected), f"{path}: {actual} != {expected}"
+        return
+    assert actual == expected, f"{path}: {actual!r} != {expected!r}"
+
+
 def main() -> None:
     data = json.loads(DATA_PATH.read_text(encoding="utf-8"))
+
+    assert_same(data["leadingIndustries"], extract_leading_industries(), "leadingIndustries")
+    assert_same(data["chainCapital"], extract_chain_capital(), "chainCapital")
+    assert_same(data["survey"], extract_survey(), "survey")
+    assert_same(data["aggregateChainEffects"]["sourceMeta"], aggregate_effect_source_metadata(data), "aggregateChainEffects.sourceMeta")
 
     output_2022 = next(row for row in data["overall"]["effects"]["output"] if row["name"] == "2022")
     assert near(output_2022["values"]["北京"], 203592.00)

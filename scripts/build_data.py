@@ -1,22 +1,42 @@
 #!/usr/bin/env python3
 """Build the structured data bundle for the Jing-Jin-Ji dashboard.
 
-The values in this file are transcribed from the current visible version of the
-research report after accepting inserted tracked changes and excluding deleted
-tracked text. Do not normalize source typos or recompute reported totals here.
+Structured workbook data is read from data/data_xlsx_format whenever the source
+files contain the fields needed by the dashboard. Report-only narrative tables
+remain in the static DATA seed below and are kept with their original report
+provenance.
 """
 
 from __future__ import annotations
 
 import json
+import re
+import xml.etree.ElementTree as ET
+from copy import deepcopy
 from pathlib import Path
+from zipfile import ZipFile
+
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "report_data.json"
+SOURCE_ROOT = ROOT / "data" / "data_xlsx_format"
+CHAIN_SOURCE_DIR = SOURCE_ROOT / "京津冀重点产业链区域分布"
+SURVEY_SOURCE = SOURCE_ROOT / "企业问卷调查" / "京津冀企业发展情况调研问卷_0319（终-发课题组）.xlsx"
+LEADING_SOURCE_DIR = SOURCE_ROOT / "区域内投入产出表及计算"
+REGIONAL_IO_SOURCE_DIR = SOURCE_ROOT / "区域间投入产出表构建及计算"
+REGIONAL_IO_WORKBOOKS = [
+    REGIONAL_IO_SOURCE_DIR / "2017年京津冀投入产出表.xlsx",
+    REGIONAL_IO_SOURCE_DIR / "2022年京津冀投入产出表.xlsx",
+]
 
 REGIONS = ["北京", "天津", "河北"]
 STAGES = ["上游", "中游", "下游"]
+CHAINS = ["氢能", "高端仪器设备和工业母机", "网络安全和工业互联网", "新能源和智能网联汽车", "生物医药", "机器人"]
+SOURCE_SECTOR_ALIASES = {
+    "研究和试验发展": ["研究和试验发展", "科学研究"],
+}
 
 
 def rows(names, values, columns):
@@ -35,6 +55,267 @@ def block(static_2017, static_2022, dynamic, output):
         "dynamic": rows(["北京", "天津", "河北"], dynamic, ["北京", "天津", "河北", "接受"]),
         "output": rows(["2017", "2022"], output, ["北京", "天津", "河北", "总"]),
     }
+
+
+def clean_text(value):
+    if pd.isna(value):
+        return ""
+    return re.sub(r"\s+", "", str(value).strip())
+
+
+def round2(value):
+    return round(float(value), 2)
+
+
+def relative_source(path: Path) -> str:
+    return str(path.relative_to(ROOT))
+
+
+def find_chain_workbook(region: str, chain: str) -> Path:
+    chain_keywords = {
+        "氢能": ["氢能"],
+        "高端仪器设备和工业母机": ["高端仪器设备", "工业母机"],
+        "网络安全和工业互联网": ["网络安全", "工业互联网"],
+        "新能源和智能网联汽车": ["新能源", "新能源汽车", "智能网联"],
+        "生物医药": ["生物医药"],
+        "机器人": ["机器人"],
+    }
+    matches = []
+    for path in CHAIN_SOURCE_DIR.glob("*.xls*"):
+        name = path.name
+        if region in name and any(keyword in name for keyword in chain_keywords[chain]):
+            matches.append(path)
+    if len(matches) != 1:
+        raise FileNotFoundError(f"Expected one workbook for {region} {chain}, found {len(matches)}")
+    return matches[0]
+
+
+def extract_stage_capital(path: Path, stage: str) -> float:
+    workbook = pd.ExcelFile(path)
+    sheet = next((name for name in workbook.sheet_names if clean_text(name) in {stage, f"{stage}资本"}), None)
+    if sheet is None:
+        raise KeyError(f"{path.name} does not contain a sheet for {stage}")
+
+    numeric = pd.read_excel(path, sheet_name=sheet, header=None).apply(pd.to_numeric, errors="coerce")
+    columns = [column for column in numeric.columns if numeric[column].notna().any()]
+    if not columns:
+        raise ValueError(f"{path.name}/{sheet} has no numeric values")
+
+    # Hydrogen workbooks keep the reported aggregate in the first numeric series;
+    # the other chain files use the final numeric series as the aggregate.
+    aggregate_column = columns[0] if "氢能" in path.name else columns[-1]
+    return round2(numeric[aggregate_column].dropna().iloc[-1])
+
+
+def extract_chain_capital():
+    source_labels = {
+        "氢能": "表2-2",
+        "高端仪器设备和工业母机": "表2-4",
+        "网络安全和工业互联网": "表2-6",
+        "新能源和智能网联汽车": "表2-8",
+        "生物医药": "表2-10",
+        "机器人": "表2-12",
+    }
+    result = []
+    for chain in CHAINS:
+        values = {}
+        for region in REGIONS:
+            workbook = find_chain_workbook(region, chain)
+            stage_values = {stage: extract_stage_capital(workbook, stage) for stage in STAGES}
+            stage_values["地区合计"] = round2(sum(stage_values[stage] for stage in STAGES))
+            values[region] = stage_values
+
+        values["三次产业结构合计"] = {
+            key: round2(sum(values[region][key] for region in REGIONS))
+            for key in [*STAGES, "地区合计"]
+        }
+        result.append({"chain": chain, "source": source_labels[chain], "values": values})
+    return result
+
+
+def source_column(columns, keyword: str) -> str:
+    matches = [column for column in columns if keyword in str(column) and not str(column).endswith("_内容")]
+    if not matches:
+        raise KeyError(f"Survey column containing {keyword!r} was not found")
+    return matches[0]
+
+
+def extract_survey():
+    survey = pd.read_excel(SURVEY_SOURCE, header=1)
+    label_to_chain = {
+        "氢能重点企业": "氢能",
+        "高端工业母机重点企业": "高端仪器设备和工业母机",
+        "网络安全和工业互联网重点企业": "网络安全和工业互联网",
+        "智能网联汽车重点企业": "新能源和智能网联汽车",
+        "生物医药重点企业": "生物医药",
+        "机器人重点企业": "机器人",
+    }
+    survey = survey[survey["标识"].isin(label_to_chain)].copy()
+    survey["chain"] = survey["标识"].map(label_to_chain)
+
+    innovation_columns = [
+        ("缺乏政府方面的扶持", "缺乏政府方面的扶持"),
+        ("缺乏企业或企业集团内部资金支持", "缺乏企业或企业集团内部资金支持"),
+        ("缺乏金融机构等外部资金支持", "缺乏金融机构等外部资金支持"),
+        ("跨区域合作成本过高", "跨区域合作成本过高"),
+        ("技术方面的信息不对称", "技术方面的信息不对称"),
+        ("市场方面的信息不对称", "市场方面的信息不对称"),
+        ("各地政策、标准不一致难以合作", "各地政策、标准不一致难以合作"),
+        ("科技成果转化利用体制机制不完善", "科技创新成果转化利用体制机制不完善"),
+        ("暂时没有进行创新合作的必要", "暂时没有进行创新合作的必要"),
+    ]
+    coordination_columns = [
+        ("区域内协同政策不完善", "区域内协同政策不完善"),
+        ("三地产业分工不够明确", "三地产业分工不够明确"),
+        ("三地城市间产业规模差距较大，协作基础有限", "三地城市间产业规模差距较大"),
+        ("产业生态不完善，没有区域性的产业联盟", "产业生态不完善"),
+        ("区域内产业服务平台建设有待加强", "区域内产业服务平台建设有待加强"),
+        ("区域内人才流动不充分", "区域内人才流动不充分"),
+    ]
+
+    def count_rows(specs):
+        rows_ = []
+        for issue, keyword in specs:
+            column = source_column(survey.columns, keyword)
+            row = {"issue": issue}
+            for chain in CHAINS:
+                row[chain] = int(pd.to_numeric(survey.loc[survey["chain"] == chain, column], errors="coerce").fillna(0).sum())
+            rows_.append(row)
+        return rows_
+
+    return {
+        "innovationBarriers": count_rows(innovation_columns),
+        "coordinationIssues": count_rows(coordination_columns),
+        "source": relative_source(SURVEY_SOURCE),
+    }
+
+
+def valid_industry_name(value) -> bool:
+    text = clean_text(value)
+    return bool(text and text.lower() != "nan" and "主导产业" not in text)
+
+
+def candidate_industries(df):
+    candidates = []
+    for column in range(df.shape[1] - 1):
+        marker = pd.to_numeric(df.iloc[:, column + 1], errors="coerce")
+        names = []
+        for row, value in enumerate(marker):
+            if pd.notna(value) and abs(float(value) - 1.0) <= 1e-9 and valid_industry_name(df.iat[row, column]):
+                name = str(df.iat[row, column]).strip()
+                if name not in names:
+                    names.append(name)
+        if names:
+            candidates.append((column, names))
+    return candidates
+
+
+def extract_industries_from_workbook(path: Path):
+    workbook = pd.ExcelFile(path)
+    best = None
+    for sheet in workbook.sheet_names:
+        if any(word in sheet for word in ["流量", "系数"]):
+            continue
+        df = pd.read_excel(path, sheet_name=sheet, header=None)
+        for column, names in candidate_industries(df):
+            if not 8 <= len(names) <= 25:
+                continue
+            sheet_score = 3 if "调整" in sheet else 2 if sheet.startswith("Sheet") else 1 if "主导产业" in sheet else 0
+            score = (sheet_score, column, -len(names))
+            if best is None or score > best[0]:
+                best = (score, names)
+    if best is None:
+        raise ValueError(f"Could not extract adjusted leading industries from {path.name}")
+    return best[1]
+
+
+def extract_leading_industries():
+    files = {
+        ("2017", "北京"): "2017年北京地区投入产出表142(主导产业).xlsx",
+        ("2017", "天津"): "2017年天津投入产出表142部门（主导产业）.xlsx",
+        ("2017", "河北"): "2017河北投入产出表-河北提供142部门(主导产业).xlsx",
+        ("2023", "北京"): "2023年北京投入产出表142部门（主导产业）.xlsx",
+        ("2023", "天津"): "2023年天津投入产出表142部门（主导产业）.xlsx",
+        ("2023", "河北"): "2023年河北投入产出表142部门（主导产业）.xlsx",
+    }
+    result = {"2017": {}, "2023": {}}
+    for (year, region), filename in files.items():
+        result[year][region] = extract_industries_from_workbook(LEADING_SOURCE_DIR / filename)
+    result["source"] = relative_source(LEADING_SOURCE_DIR)
+    return result
+
+
+def workbook_sheet_names(path: Path) -> set[str]:
+    namespace = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    with ZipFile(path) as archive:
+        root = ET.fromstring(archive.read("xl/workbook.xml"))
+    return {sheet.attrib["name"] for sheet in root.find("m:sheets", namespace)}
+
+
+def workbook_shared_text(path: Path) -> str:
+    with ZipFile(path) as archive:
+        try:
+            return archive.read("xl/sharedStrings.xml").decode("utf-8", errors="ignore")
+        except KeyError:
+            return ""
+
+
+def aggregate_effect_source_metadata(data):
+    required_sheets = {
+        "乘数效应",
+        "溢出效应",
+        "乘数效应占比",
+        "北京溢出效应",
+        "天津溢出效应",
+        "河北溢出效应",
+    }
+    stage_sector_mapping = {
+        stage: sorted({
+            row[1]
+            for row in data["chainMappings"]["io42"]
+            if stage in row[0]
+        })
+        for stage in STAGES
+    }
+    required_sectors = sorted({sector for sectors in stage_sector_mapping.values() for sector in sectors})
+
+    for workbook in REGIONAL_IO_WORKBOOKS:
+        if not workbook.exists():
+            raise FileNotFoundError(f"Regional IO source workbook is missing: {workbook}")
+        missing_sheets = required_sheets - workbook_sheet_names(workbook)
+        if missing_sheets:
+            raise KeyError(f"{workbook.name} missing sheets: {sorted(missing_sheets)}")
+        shared_text = workbook_shared_text(workbook)
+        missing_sectors = [
+            sector
+            for sector in required_sectors
+            if not any(alias in shared_text for alias in SOURCE_SECTOR_ALIASES.get(sector, [sector]))
+        ]
+        if missing_sectors:
+            raise KeyError(f"{workbook.name} missing mapped 42-sector labels: {missing_sectors}")
+
+    return {
+        "source": "data/data_xlsx_format/区域间投入产出表构建及计算",
+        "workbooks": [relative_source(path) for path in REGIONAL_IO_WORKBOOKS],
+        "checkedSheets": sorted(required_sheets),
+        "stageSectorMapping": stage_sector_mapping,
+    }
+
+
+def apply_source_overrides(seed):
+    data = deepcopy(seed)
+    data["meta"]["dataSourceRoot"] = relative_source(SOURCE_ROOT)
+    data["meta"]["extractionPolicy"] = (
+        "结构化数值优先从 data/data_xlsx_format 下的 Excel/XLS 源文件生成；"
+        "区域产业联动分析使用区域间投入产出源工作簿计算页核验；"
+        "源文件未提供的报告叙述和政策聚合表沿用报告口径静态整理。"
+    )
+    data["leadingIndustries"] = extract_leading_industries()
+    data["chainCapital"] = extract_chain_capital()
+    data["survey"] = extract_survey()
+    data["aggregateChainEffects"]["sourceMeta"] = aggregate_effect_source_metadata(data)
+    data["aggregateChainEffects"]["source"] = "data/data_xlsx_format/区域间投入产出表构建及计算（表3-3口径）"
+    return data
 
 
 DATA = {
@@ -407,8 +688,9 @@ DATA["chainEffectsSource"] = "附录表-1至附录表-6，OOXML表37-42。报告
 
 
 def main() -> None:
+    data = apply_source_overrides(DATA)
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(DATA, ensure_ascii=False, indent=2), encoding="utf-8")
+    OUT.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {OUT.relative_to(ROOT)}")
 
 
