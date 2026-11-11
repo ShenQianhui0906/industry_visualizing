@@ -27,7 +27,7 @@ const CONTROL_VISIBILITY = {
   home: [],
   region: [],
   evolution: ["stage", "effect"],
-  linkage: ["chain"],
+  linkage: [],
   topic: ["chain", "stage", "effect"],
   methods: [],
 };
@@ -388,9 +388,8 @@ function pieChartPair(outputRows = null) {
       </g>
     `;
   }).join("");
-  const note = '<div class="source">扇形分母使用北京、天津、河北三地加总；半径按三地合计产出的平方根缩放，面积同时表达地区占比与规模变化。</div>';
   const legend = `<div class="legend">${DATA.regions.map((region) => `<span><i style="background:${COLORS[region]}"></i>${region}</span>`).join("")}</div>`;
-  return `<div class="chart"><svg viewBox="0 0 760 340" role="img">${pies}</svg></div>${legend}${note}`;
+  return `<div class="chart"><svg viewBox="0 0 760 340" role="img">${pies}</svg></div>${legend}`;
 }
 
 function getRegionOutputMetrics(region) {
@@ -488,7 +487,6 @@ function updateRegionInfoPanel(panelEl, region) {
         `).join("")}
       </div>
       ${regionContributionPie(region)}
-      <div class="region-info-source">增幅、占比、贡献为表1-4派生计算。</div>
     </div>
   `;
 }
@@ -613,7 +611,6 @@ function updateRegionalLinkInfoPanel(panelEl, selection = {}) {
         `).join("")}
       </div>
       ${regionalLinkBalanceChart(stats, selection)}
-      <div class="region-info-source">数据来源：${esc(regionalLinkSourceLabel())}；矩阵行=接受方，列=输出方。</div>
     </div>
   `;
 }
@@ -628,7 +625,7 @@ function renderHome() {
     values: item.values["三次产业结构合计"],
   }));
   const findings = `<div class="insight-list">${DATA.findings.map((item) => `
-    <div class="insight"><h3>${esc(item.title)}</h3><p>${esc(item.text)}</p><div class="source">${esc(item.source)}</div></div>
+    <div class="insight"><h3>${esc(item.title)}</h3><p>${esc(item.text)}</p></div>
   `).join("")}</div>`;
 
   view.innerHTML = `
@@ -1752,9 +1749,6 @@ function drawRegionalLinkHud(ctx, scene, selection) {
     ctx.fillStyle = "rgba(207, 229, 242, 0.88)";
     ctx.fillText(label, x + 36, legendY - 1);
   });
-
-  ctx.fillStyle = "rgba(157, 193, 214, 0.84)";
-  ctx.fillText(`数据源：${regionalLinkSourceLabel()}`, pad, scene.w < 760 ? legendY + 26 : pad + 58);
 }
 
 function pickRegionalLinkScene(scene, x, y) {
@@ -1788,6 +1782,692 @@ function distanceToSegment(point, a, b) {
   return Math.hypot(point.x - px, point.y - py);
 }
 
+const POLICY_AXIS_META = {
+  tool: {
+    axis: "X",
+    title: "政策工具要素",
+    fullTitle: "X 政策工具要素数",
+    color: COLORS.北京,
+    coord: "x",
+    source: "表4-5",
+  },
+  cooperation: {
+    axis: "Y",
+    title: "合作阶段要素",
+    fullTitle: "Y 合作阶段要素数",
+    color: COLORS.下游,
+    coord: "y",
+    source: "表4-4",
+  },
+  industry: {
+    axis: "Z",
+    title: "产业划分要素",
+    fullTitle: "Z 产业划分要素数",
+    color: COLORS.河北,
+    coord: "z",
+    source: "表4-2",
+  },
+};
+
+const POLICY_AXIS_ORDER = ["tool", "cooperation", "industry"];
+const POLICY_DIMENSION_ORDER = ["X政策工具维度", "Y合作程度维度", "Z产业划分维度"];
+const POLICY_Y_VISUAL_SCALE = 0.66;
+const POLICY_TOOL_KEYS = ["财税补贴类", "供给平台类", "规则标准类", "信息协调类"];
+const POLICY_TOOL_LABELS = {
+  财税补贴类: "财税补贴",
+  供给平台类: "供给平台",
+  规则标准类: "规划/标准",
+  信息协调类: "信息协调",
+};
+const POLICY_COOPERATION_KEYS = ["初期", "成熟", "深度"];
+const POLICY_CHAIN_COLORS = {
+  网络安全和工业互联网: "#4ad5ff",
+  生物医药: "#54e6a3",
+  新能源和智能网联汽车: "#f7bc47",
+  氢能: "#a88cff",
+  高端仪器设备和工业母机: "#ff8d5c",
+  机器人: "#ff5da8",
+};
+
+const POLICY_SHORT_LABELS = {
+  网络安全和工业互联网: ["网络安全", "工业互联网"],
+  生物医药: ["生物", "医药"],
+  新能源和智能网联汽车: ["新能源", "智能网联"],
+  氢能: ["氢能"],
+  高端仪器设备和工业母机: ["高端仪器", "工业母机"],
+  机器人: ["机器人"],
+};
+
+const DEFAULT_POLICY_CONCLUSIONS = [
+  {
+    title: "工具供给以规则与信息协调为主",
+    text: "政策工具维度共有1254个参考点，占总体48.89%。信息协调类442个、规划标准类439个，两者合计超过七成；财税补贴类仅84个、占6.7%，显示政策更偏向制度环境塑造而非直接资金投入。",
+  },
+  {
+    title: "协同深度仍停留在初期至成熟阶段",
+    text: "合作程度维度共有999个参考点。成熟阶段430个、初期375个，深度合作仅194个，说明政策更重视稳定见效和可复制项目，对核心技术共享、利益分配和制度深度绑定的支撑仍不足。",
+  },
+  {
+    title: "产业支持集中于成熟基础较强领域",
+    text: "产业划分维度共有312个参考点，其中网络安全和工业互联网118个、生物医药96个，两者合计接近七成。氢能、高端仪器设备和工业母机、机器人等领域政策覆盖偏弱，存在基础制造与前沿硬件支持缺口。",
+  },
+  {
+    title: "优化方向是工具链再平衡",
+    text: "报告建议强化跨区域财税共享、协同基金、供给平台转化、标准互认和数字化信息流转，形成以财税补贴为底层动力、平台为支撑载体、规则标准为制度轨道、信息协调为神经中枢的协同网络。",
+  },
+];
+
+function percentFromRef(value) {
+  const match = String(value || "").match(/（([\d.]+)%/);
+  return match ? Number(match[1]) : 0;
+}
+
+function getPolicyConclusions() {
+  return DATA.policy.conclusions?.length ? DATA.policy.conclusions : DEFAULT_POLICY_CONCLUSIONS;
+}
+
+function getPolicyDimensionGroups() {
+  return Object.fromEntries(POLICY_DIMENSION_ORDER.map((dimension) => [
+    dimension,
+    DATA.policy.dimensionElements.filter((item) => item.dimension === dimension),
+  ]));
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const value = String(hex || "").replace("#", "");
+  if (!/^[\da-f]{6}$/i.test(value)) return `rgba(74, 213, 255, ${alpha})`;
+  const number = Number.parseInt(value, 16);
+  const r = (number >> 16) & 255;
+  const g = (number >> 8) & 255;
+  const b = number & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function policyEntries(row, keys, labels = {}) {
+  return keys.map((key) => ({
+    key,
+    label: labels[key] || key,
+    count: countFromString(row?.[key]),
+    raw: row?.[key] || "0（0%）",
+  }));
+}
+
+function policyTopEntry(entries) {
+  return entries.slice().sort((a, b) => b.count - a.count)[0] || { label: "—", count: 0, raw: "—" };
+}
+
+function getPolicyIndustryRows() {
+  const toolByChain = Object.fromEntries((DATA.policy.toolByChain || []).map((row) => [row.chain, row]));
+  const cooperationByChain = Object.fromEntries((DATA.policy.cooperationByChain || []).map((row) => [row.chain, row]));
+  const industryElements = DATA.policy.dimensionElements.filter((item) => item.dimension === "Z产业划分维度");
+  const industryByChain = Object.fromEntries(industryElements.map((item) => [item.element, item]));
+  const chains = industryElements.length ? industryElements.map((item) => item.element) : DATA.chainCapital.map((item) => item.chain);
+  const ranked = industryElements.slice().sort((a, b) => b.count - a.count).map((item) => item.element);
+
+  return chains.map((chain, index) => {
+    const toolEntries = policyEntries(toolByChain[chain], POLICY_TOOL_KEYS, POLICY_TOOL_LABELS);
+    const cooperationEntries = policyEntries(cooperationByChain[chain], POLICY_COOPERATION_KEYS);
+    const industry = industryByChain[chain] || {};
+    const toolTotal = sum(toolEntries.map((entry) => entry.count));
+    const cooperationTotal = sum(cooperationEntries.map((entry) => entry.count));
+    const industryCount = Number(industry.count || 0);
+    const color = POLICY_CHAIN_COLORS[chain] || COLORS.北京;
+    return {
+      chain,
+      index,
+      rank: ranked.indexOf(chain) + 1 || index + 1,
+      color,
+      toolEntries,
+      cooperationEntries,
+      toolTotal,
+      cooperationTotal,
+      industryCount,
+      industryPercent: Number(industry.percent || 0),
+      elementRef: industry.elementRef || `${industryCount}（0%）`,
+      dimensionRef: industry.dimensionRef || "",
+      dominantTool: policyTopEntry(toolEntries),
+      dominantCooperation: policyTopEntry(cooperationEntries),
+      coreProduct: DATA.coreProducts?.[chain] || "报告未列出核心产品或技术。",
+      labelLines: POLICY_SHORT_LABELS[chain] || [chain],
+    };
+  }).filter((item) => item.chain);
+}
+
+function buildPolicy3DModel() {
+  const axisLength = 400;
+  const start = 34;
+  const rows = getPolicyIndustryRows();
+  const axisMax = {
+    tool: Math.max(...rows.map((item) => item.toolTotal), 1),
+    cooperation: Math.max(...rows.map((item) => item.cooperationTotal), 1),
+    industry: Math.max(...rows.map((item) => item.industryCount), 1),
+  };
+  const scale = (value, max) => start + (axisLength - start) * (Number(value || 0) / max);
+  const items = rows.map((raw) => ({
+    ...raw,
+    key: `policy-chain-${raw.chain}`,
+    coord: {
+      x: scale(raw.toolTotal, axisMax.tool),
+      y: scale(raw.cooperationTotal, axisMax.cooperation),
+      z: scale(raw.industryCount, axisMax.industry),
+    },
+    radius: 10 + Math.sqrt(raw.industryCount / axisMax.industry) * 20,
+    meta: {
+      color: raw.color,
+      side: hexToRgba(raw.color, 0.2),
+    },
+  }));
+
+  return {
+    axisLength,
+    axisMax,
+    items,
+  };
+}
+
+function initPolicy3DScene(canvas) {
+  const ctx = canvas.getContext("2d");
+  const infoSlot = $("#policyLinkInfoSlot");
+  const camera = { yaw: -0.42, pitch: -0.52, fov: 840 };
+  const target = { yaw: camera.yaw, pitch: camera.pitch };
+  const model = buildPolicy3DModel();
+  const scene = {
+    raf: 0,
+    disposed: false,
+    dragging: false,
+    pointer: { x: 0, y: 0 },
+    pointerStart: { x: 0, y: 0 },
+    dragMoved: false,
+    dpr: 1,
+    w: 0,
+    h: 0,
+    hitAreas: [],
+  };
+  const selection = { key: model.items[0]?.key || null };
+  updatePolicyInfoPanel(infoSlot, model.items[0] || null);
+
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    scene.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    scene.w = Math.max(320, rect.width);
+    scene.h = Math.max(420, rect.height);
+    canvas.width = Math.round(scene.w * scene.dpr);
+    canvas.height = Math.round(scene.h * scene.dpr);
+    ctx.setTransform(scene.dpr, 0, 0, scene.dpr, 0, 0);
+  }
+
+  function onPointerDown(event) {
+    scene.dragging = true;
+    scene.pointer.x = event.clientX;
+    scene.pointer.y = event.clientY;
+    scene.pointerStart.x = event.clientX;
+    scene.pointerStart.y = event.clientY;
+    scene.dragMoved = false;
+    canvas.setPointerCapture(event.pointerId);
+  }
+
+  function onPointerMove(event) {
+    if (!scene.dragging) return;
+    const dx = event.clientX - scene.pointer.x;
+    const dy = event.clientY - scene.pointer.y;
+    scene.pointer.x = event.clientX;
+    scene.pointer.y = event.clientY;
+    if (Math.hypot(event.clientX - scene.pointerStart.x, event.clientY - scene.pointerStart.y) <= 5) return;
+    scene.dragMoved = true;
+    target.yaw += dx * 0.009;
+    target.pitch = Math.max(-1.06, Math.min(-0.2, target.pitch + dy * 0.006));
+  }
+
+  function onPointerUp(event) {
+    const wasClick = !scene.dragMoved && Math.hypot(event.clientX - scene.pointerStart.x, event.clientY - scene.pointerStart.y) <= 6;
+    scene.dragging = false;
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+    if (!wasClick) return;
+    const rect = canvas.getBoundingClientRect();
+    const hit = pickPolicyScene(scene, event.clientX - rect.left, event.clientY - rect.top);
+    selection.key = hit?.item?.key || null;
+    updatePolicyInfoPanel(infoSlot, hit?.item || null);
+  }
+
+  function resetView() {
+    target.yaw = -0.42;
+    target.pitch = -0.52;
+  }
+
+  function frame() {
+    if (scene.disposed) return;
+    camera.yaw += (target.yaw - camera.yaw) * 0.15;
+    camera.pitch += (target.pitch - camera.pitch) * 0.15;
+    drawPolicy3DScene(ctx, scene, camera, model, selection);
+    scene.raf = requestAnimationFrame(frame);
+  }
+
+  resize();
+  window.addEventListener("resize", resize);
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+  canvas.addEventListener("dblclick", resetView);
+  scene.raf = requestAnimationFrame(frame);
+
+  return {
+    dispose() {
+      scene.disposed = true;
+      cancelAnimationFrame(scene.raf);
+      window.removeEventListener("resize", resize);
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("dblclick", resetView);
+    },
+  };
+}
+
+function projectPolicy3D(point, camera, scene) {
+  const visualPoint = {
+    ...point,
+    y: point.y * POLICY_Y_VISUAL_SCALE,
+  };
+  const rotated = rotate3D(visualPoint, camera);
+  const scale = Math.min(scene.w, scene.h) / 540;
+  const depth = camera.fov + rotated.z;
+  const perspective = camera.fov / Math.max(300, depth);
+  const centerX = Math.max(scene.w * 0.22, scene.w < 520 ? 86 : 136);
+  return {
+    x: centerX + rotated.x * scale * perspective,
+    y: scene.h * 0.68 - rotated.y * scale * perspective,
+    z: rotated.z,
+    perspective,
+  };
+}
+
+function drawPolicy3DScene(ctx, scene, camera, model, selection) {
+  ctx.clearRect(0, 0, scene.w, scene.h);
+  drawRegionSceneBackground(ctx, scene);
+  drawPolicyGrid(ctx, scene, camera, model);
+  drawPolicyAxes(ctx, scene, camera, model);
+  drawPolicyNodes(ctx, scene, camera, model, selection);
+  drawPolicyHud(ctx, scene);
+}
+
+function drawPolicyGrid(ctx, scene, camera, model) {
+  const step = 64;
+  const end = model.axisLength;
+  for (let i = 0; i <= end; i += step) {
+    drawPolicyLine(ctx, scene, camera, { x: i, y: 0, z: 0 }, { x: i, y: 0, z: end }, "rgba(74, 213, 255, 0.08)", 1);
+    drawPolicyLine(ctx, scene, camera, { x: 0, y: 0, z: i }, { x: end, y: 0, z: i }, "rgba(74, 213, 255, 0.08)", 1);
+    drawPolicyLine(ctx, scene, camera, { x: i, y: 0, z: 0 }, { x: i, y: end, z: 0 }, "rgba(247, 188, 71, 0.055)", 1);
+    drawPolicyLine(ctx, scene, camera, { x: 0, y: i, z: 0 }, { x: end, y: i, z: 0 }, "rgba(247, 188, 71, 0.055)", 1);
+    drawPolicyLine(ctx, scene, camera, { x: 0, y: i, z: 0 }, { x: 0, y: i, z: end }, "rgba(84, 230, 163, 0.055)", 1);
+    drawPolicyLine(ctx, scene, camera, { x: 0, y: 0, z: i }, { x: 0, y: end, z: i }, "rgba(84, 230, 163, 0.055)", 1);
+  }
+}
+
+function drawPolicyAxes(ctx, scene, camera, model) {
+  const end = model.axisLength + 36;
+  const axes = [
+    { key: "tool", start: { x: 0, y: 0, z: 0 }, end: { x: end, y: 0, z: 0 } },
+    { key: "cooperation", start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: end, z: 0 } },
+    { key: "industry", start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: 0, z: end } },
+  ];
+
+  axes.forEach((axis) => {
+    const meta = POLICY_AXIS_META[axis.key];
+    drawPolicyLine(ctx, scene, camera, axis.start, axis.end, meta.color, 2.4, meta.color);
+    drawPolicyArrowhead(ctx, scene, camera, axis.start, axis.end, meta.color);
+    drawPolicyAxisTicks(ctx, scene, camera, model, axis);
+    drawPolicyAxisText(ctx, scene, camera, `${meta.axis} ${meta.title}`, `最高 ${fmt(model.axisMax[axis.key], 0)}个`, axis.end, meta.color);
+  });
+
+  const origin = projectPolicy3D({ x: 0, y: 0, z: 0 }, camera, scene);
+  ctx.save();
+  ctx.fillStyle = "rgba(234, 247, 255, 0.92)";
+  ctx.shadowColor = "rgba(74, 213, 255, 0.66)";
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(origin.x, origin.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPolicyAxisTicks(ctx, scene, camera, model, axis) {
+  const meta = POLICY_AXIS_META[axis.key];
+  const tickCount = 4;
+  for (let i = 1; i <= tickCount; i += 1) {
+    const ratio = i / tickCount;
+    const point = { x: 0, y: 0, z: 0 };
+    point[meta.coord] = model.axisLength * ratio;
+    const tickA = { ...point };
+    const tickB = { ...point };
+    if (meta.coord === "x") {
+      tickA.z -= 7;
+      tickB.z += 7;
+    } else if (meta.coord === "y") {
+      tickA.x -= 7;
+      tickB.x += 7;
+    } else {
+      tickA.x -= 7;
+      tickB.x += 7;
+    }
+    drawPolicyLine(ctx, scene, camera, tickA, tickB, hexToRgba(meta.color, 0.52), 1);
+    const labelPoint = { ...point };
+    if (meta.coord === "y") labelPoint.x += 22;
+    else labelPoint.y -= 18;
+    drawPolicyTickText(ctx, scene, camera, fmt(model.axisMax[axis.key] * ratio, 0), labelPoint, meta.color);
+  }
+}
+
+function drawPolicyTickText(ctx, scene, camera, text, point, color) {
+  const p = projectPolicy3D(point, camera, scene);
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "600 10px DIN Alternate, Avenir Next, PingFang SC, Microsoft YaHei, Arial";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(5, 18, 30, 0.9)";
+  ctx.fillStyle = hexToRgba(color, 0.86);
+  ctx.strokeText(text, p.x, p.y);
+  ctx.fillText(text, p.x, p.y);
+  ctx.restore();
+}
+
+function drawPolicyLine(ctx, scene, camera, a, b, color, width = 1, glow = "") {
+  const p0 = projectPolicy3D(a, camera, scene);
+  const p1 = projectPolicy3D(b, camera, scene);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.shadowColor = glow || "rgba(0,0,0,0)";
+  ctx.shadowBlur = glow ? 10 : 0;
+  ctx.beginPath();
+  ctx.moveTo(p0.x, p0.y);
+  ctx.lineTo(p1.x, p1.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPolicyArrowhead(ctx, scene, camera, a, b, color) {
+  const p0 = projectPolicy3D(a, camera, scene);
+  const p1 = projectPolicy3D(b, camera, scene);
+  const angle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+  const size = 10;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p1.x - Math.cos(angle - 0.46) * size, p1.y - Math.sin(angle - 0.46) * size);
+  ctx.lineTo(p1.x - Math.cos(angle + 0.46) * size, p1.y - Math.sin(angle + 0.46) * size);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPolicyAxisText(ctx, scene, camera, title, ref, point, color) {
+  const p = projectPolicy3D(point, camera, scene);
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "800 13px PingFang SC, Microsoft YaHei, Arial";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(5, 18, 30, 0.92)";
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8;
+  ctx.strokeText(title, p.x, p.y - 9);
+  ctx.fillText(title, p.x, p.y - 9);
+  ctx.font = "600 11px PingFang SC, Microsoft YaHei, Arial";
+  ctx.fillStyle = "rgba(207, 229, 242, 0.86)";
+  ctx.shadowBlur = 0;
+  ctx.strokeText(ref, p.x, p.y + 10);
+  ctx.fillText(ref, p.x, p.y + 10);
+  ctx.restore();
+}
+
+function drawPolicyNodes(ctx, scene, camera, model, selection) {
+  const hitAreas = [];
+  const projected = model.items.map((item) => {
+    const p = projectPolicy3D(item.coord, camera, scene);
+    return {
+      item,
+      point: p,
+      depth: p.z,
+      selected: selection.key === item.key,
+    };
+  });
+
+  projected
+    .slice()
+    .sort((a, b) => b.depth - a.depth)
+    .forEach(({ item, selected }) => {
+      drawPolicyNodeGuide(ctx, scene, camera, item, !selection.key || selected);
+    });
+
+  projected
+    .slice()
+    .sort((a, b) => (a.selected === b.selected ? b.depth - a.depth : a.selected ? 1 : -1))
+    .forEach(({ item, point, selected }) => {
+      const radius = item.radius * point.perspective * (selected ? 1.22 : 1);
+      const active = !selection.key || selected;
+      drawPolicyNode(ctx, point, radius, item, active, selected);
+      drawPolicyNodeText(ctx, point, radius, item, selected, scene);
+      hitAreas.push({
+        type: "policy-node",
+        item,
+        x: point.x,
+        y: point.y,
+        r: Math.max(12, radius + 8),
+        depth: point.z,
+      });
+    });
+  scene.hitAreas = hitAreas;
+}
+
+function drawPolicyNodeGuide(ctx, scene, camera, item, active) {
+  const foot = { x: item.coord.x, y: 0, z: item.coord.z };
+  const xFoot = { x: item.coord.x, y: 0, z: 0 };
+  const zFoot = { x: 0, y: 0, z: item.coord.z };
+  const color = active ? hexToRgba(item.color, 0.36) : "rgba(157, 193, 214, 0.09)";
+  drawPolicyLine(ctx, scene, camera, item.coord, foot, color, active ? 1.25 : 0.8);
+  drawPolicyLine(ctx, scene, camera, foot, xFoot, color, 0.9);
+  drawPolicyLine(ctx, scene, camera, foot, zFoot, color, 0.9);
+}
+
+function drawPolicyNode(ctx, point, radius, item, active, selected) {
+  const gradient = ctx.createRadialGradient(point.x - radius * 0.38, point.y - radius * 0.42, radius * 0.08, point.x, point.y, radius);
+  gradient.addColorStop(0, "rgba(255, 255, 255, 0.96)");
+  gradient.addColorStop(0.28, item.meta.color);
+  gradient.addColorStop(1, selected ? "rgba(9, 58, 78, 0.94)" : item.meta.side);
+  ctx.save();
+  ctx.globalAlpha = active ? 1 : 0.35;
+  ctx.shadowColor = selected ? item.meta.color : "rgba(74, 213, 255, 0.26)";
+  ctx.shadowBlur = selected ? 26 : 10;
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = selected ? 2.4 : 1.1;
+  ctx.strokeStyle = selected ? "#eafaff" : "rgba(234, 247, 255, 0.42)";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPolicyNodeText(ctx, point, radius, item, selected, scene) {
+  const lines = item.labelLines;
+  const showValue = selected || item.industryCount >= 90 || scene.w > 780;
+  const lineHeight = 13;
+  const y = point.y - radius - (showValue ? 24 : 15);
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = selected
+    ? "800 13px PingFang SC, Microsoft YaHei, Arial"
+    : "700 12px PingFang SC, Microsoft YaHei, Arial";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(5, 18, 30, 0.94)";
+  ctx.fillStyle = selected ? "#eafaff" : "rgba(219, 242, 255, 0.84)";
+  lines.slice(0, 2).forEach((line, index) => {
+    const yy = y + index * lineHeight;
+    ctx.strokeText(line, point.x, yy);
+    ctx.fillText(line, point.x, yy);
+  });
+  if (showValue) {
+    ctx.font = selected
+      ? "800 12px DIN Alternate, Avenir Next, PingFang SC, Microsoft YaHei, Arial"
+      : "700 11px DIN Alternate, Avenir Next, PingFang SC, Microsoft YaHei, Arial";
+    ctx.fillStyle = item.meta.color;
+    const yy = y + lines.slice(0, 2).length * lineHeight + 2;
+    ctx.strokeText(`Z ${item.industryCount}`, point.x, yy);
+    ctx.fillText(`Z ${item.industryCount}`, point.x, yy);
+  }
+  ctx.restore();
+}
+
+function drawPolicyHud(ctx, scene) {
+  const pad = scene.w < 720 ? 18 : 28;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.shadowBlur = 0;
+  ctx.font = "700 22px PingFang SC, Microsoft YaHei, Arial";
+  ctx.fillStyle = "#eaf7ff";
+  ctx.fillText("政策产业联动三维坐标", pad, pad);
+
+  const legendY = scene.h - 74;
+  POLICY_AXIS_ORDER.forEach((axisKey, index) => {
+    const meta = POLICY_AXIS_META[axisKey];
+    const x = pad + index * 128;
+    ctx.fillStyle = meta.color;
+    ctx.shadowColor = meta.color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(x + 6, legendY + 7, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.font = "13px PingFang SC, Microsoft YaHei, Arial";
+    ctx.fillStyle = "rgba(207, 229, 242, 0.88)";
+    ctx.fillText(meta.fullTitle, x + 18, legendY);
+  });
+}
+
+function pickPolicyScene(scene, x, y) {
+  return scene.hitAreas
+    .filter((area) => area.type === "policy-node")
+    .filter((area) => Math.hypot(x - area.x, y - area.y) <= area.r)
+    .sort((a, b) => a.depth - b.depth)[0] || null;
+}
+
+function policyOverviewMetrics() {
+  const rows = getPolicyIndustryRows();
+  const topToolIndustry = rows.slice().sort((a, b) => b.toolTotal - a.toolTotal)[0];
+  const topCooperationIndustry = rows.slice().sort((a, b) => b.cooperationTotal - a.cooperationTotal)[0];
+  const topIndustry = rows.slice().sort((a, b) => b.industryCount - a.industryCount)[0];
+  return [
+    ["政策文本", "101份"],
+    ["产业散点", `${rows.length}个`],
+    ["X最高产业", topToolIndustry ? `${topToolIndustry.chain} ${topToolIndustry.toolTotal}` : "—"],
+    ["Y最高产业", topCooperationIndustry ? `${topCooperationIndustry.chain} ${topCooperationIndustry.cooperationTotal}` : "—"],
+    ["Z最高产业", topIndustry ? `${topIndustry.chain} ${topIndustry.industryCount}` : "—"],
+    ["Z维度合计", topIndustry?.dimensionRef || "312（12.16%）"],
+  ];
+}
+
+function policySelectedMetrics(item) {
+  return [
+    ["X 工具要素", `${fmt(item.toolTotal, 0)}个`],
+    ["Y 合作要素", `${fmt(item.cooperationTotal, 0)}个`],
+    ["Z 产业要素", `${fmt(item.industryCount, 0)}个`],
+    ["产业维度占比", `${fmt(item.industryPercent, 2)}%`],
+    ["主导工具", `${item.dominantTool.label} ${fmt(item.dominantTool.count, 0)}`],
+    ["主导阶段", `${item.dominantCooperation.label} ${fmt(item.dominantCooperation.count, 0)}`],
+  ];
+}
+
+function policyEntryBars(entries, total) {
+  const max = Math.max(...entries.map((entry) => entry.count), 1);
+  return `
+    <div class="policy-entry-bars">
+      ${entries.map((entry) => {
+        const width = Math.max(4, entry.count / max * 100);
+        const share = total ? entry.count / total * 100 : 0;
+        return `
+          <div class="policy-entry-row">
+            <div class="policy-entry-label">
+              <span>${esc(entry.label)}</span>
+              <em>${fmt(entry.count, 0)} / ${fmt(share, 1)}%</em>
+            </div>
+            <div class="policy-entry-track"><i style="width:${width}%"></i></div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function policyIndustryInsight(item) {
+  const rankText = item.rank > 0 ? `第${item.rank}` : "靠前";
+  return `${item.chain}在产业划分维度为${fmt(item.industryCount, 0)}个参考点，占该维度${fmt(item.industryPercent, 2)}%，位列${rankText}。政策工具侧以${item.dominantTool.label}为主，合作阶段侧以${item.dominantCooperation.label}为主，反映该产业当前政策联动更集中于既有工具供给和阶段性协同。`;
+}
+
+function renderPolicyConclusionBox() {
+  return `
+    <section class="policy-conclusion-box dv-border">
+      <div class="panel-title"><span>主要结论</span><small></small></div>
+      <div class="policy-conclusion-grid">
+        ${getPolicyConclusions().map((item) => `
+          <article class="policy-conclusion-item">
+            <h3>${esc(item.title)}</h3>
+            <p>${esc(item.text)}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function updatePolicyInfoPanel(panelEl, selectedItem) {
+  if (!panelEl) return;
+  const metrics = selectedItem ? policySelectedMetrics(selectedItem) : policyOverviewMetrics();
+  const title = selectedItem ? selectedItem.chain : "六大产业概览";
+  const subtitle = selectedItem ? "政策工具 × 合作阶段 × 产业划分" : "报告政策聚合表";
+  panelEl.innerHTML = `
+    <div class="region-info-panel policy-info-panel">
+      <div class="region-info-head">
+        <span>${esc(title)}</span>
+        <small>${esc(subtitle)}</small>
+      </div>
+      <div class="region-info-metrics policy-info-metrics">
+        ${metrics.map(([label, value]) => `
+          <div class="region-info-metric">
+            <em>${esc(label)}</em>
+            <strong>${esc(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+      ${selectedItem ? `
+        <div class="policy-chain-note">${esc(policyIndustryInsight(selectedItem))}</div>
+        <section class="policy-detail-block">
+          <h3>政策工具结构</h3>
+          ${policyEntryBars(selectedItem.toolEntries, selectedItem.toolTotal)}
+        </section>
+        <section class="policy-detail-block">
+          <h3>合作阶段结构</h3>
+          ${policyEntryBars(selectedItem.cooperationEntries, selectedItem.cooperationTotal)}
+        </section>
+        <section class="policy-detail-block">
+          <h3>核心产品或技术</h3>
+          <p>${esc(selectedItem.coreProduct)}</p>
+        </section>
+      ` : ""}
+    </div>
+  `;
+}
+
 function renderEvolution() {
   disposeRegionScene();
   view.innerHTML = `
@@ -1800,37 +2480,19 @@ function renderEvolution() {
 }
 
 function renderLinkage() {
-  const policyToolItems = DATA.policy.dimensionElements
-    .filter((item) => item.dimension === "X政策工具维度")
-    .map((item, i) => ({ label: item.element, value: item.count, color: [COLORS.北京, COLORS.下游, COLORS.中游, COLORS.河北][i] || COLORS.北京 }));
-  const industryPolicyItems = DATA.policy.dimensionElements
-    .filter((item) => item.dimension === "Z产业划分维度")
-    .map((item) => ({ label: item.element, value: item.count, color: item.element === state.chain ? COLORS.下游 : COLORS.北京 }));
-  const toolByCoop = DATA.policy.toolByCooperation.map((row) => ({
-    label: row.stage,
-    values: {
-      财税补贴类: countFromString(row["财税补贴类"]),
-      供给平台类: countFromString(row["供给平台类"]),
-      规则标准类: countFromString(row["规则标准类"]),
-      信息协调类: countFromString(row["信息协调类"]),
-    },
-  }));
-  const issueItems = DATA.survey.innovationBarriers
-    .map((row) => ({ label: row.issue, value: row[state.chain], color: COLORS.中游 }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 6);
-  const policyRows = DATA.policy.toolByChain.map((row) => [row.chain, row["财税补贴类"], row["供给平台类"], row["规则标准类"], row["信息协调类"]]);
-  const surveyRows = DATA.survey.coordinationIssues.map((row) => [row.issue, row[state.chain]]);
+  disposeRegionScene();
   view.innerHTML = `
-    <div class="dashboard-grid">
-      ${panel("政策工具结构", "表4-2", barChart(policyToolItems, { height: 300 }), 6)}
-      ${panel("产业政策参考点", "表4-2", barChart(industryPolicyItems, { height: 300 }), 6)}
-      ${panel("合作阶段 × 政策工具", "表4-3", stackedBars(toolByCoop, ["财税补贴类", "供给平台类", "规则标准类", "信息协调类"], { labelW: 90 }), 7)}
-      ${panel(`${state.chain}企业创新合作障碍`, "表5-6", barChart(issueItems, { height: 320 }), 5)}
-      ${panel("产业链政策工具明细", "表4-4", table(["产业链", "财税补贴类", "供给平台类", "规则标准类", "信息协调类"], policyRows), 7)}
-      ${panel(`${state.chain}区域协同问题`, "表5-7", table(["问题", "企业数"], surveyRows), 5)}
+    <div class="policy-linkage-page">
+      <div class="policy-3d-stage dv-border">
+        <div class="policy-3d-canvas-wrap">
+          <canvas class="region-3d-canvas policy-3d-canvas" id="policy3dCanvas" aria-label="政策产业联动三维坐标图"></canvas>
+        </div>
+        <aside class="policy-3d-info-slot" id="policyLinkInfoSlot"></aside>
+      </div>
+      ${renderPolicyConclusionBox()}
     </div>
   `;
+  activeRegionScene = initPolicy3DScene($("#policy3dCanvas"));
 }
 
 function renderTopic() {
@@ -1877,7 +2539,7 @@ function renderMethods() {
   ];
   view.innerHTML = `
     <div class="dashboard-grid">
-      ${panel("数据来源与口径", "", meta, 12)}
+      ${panel("口径说明", "", meta, 12)}
       ${panel("页面数据映射", "不对原表数值重算或改写", table(["报告表号", "结构化内容", "页面使用"], mappingRows), 7)}
       ${panel("六链资本数据清单", "表2系列，单位：亿元", table(["产业链", "来源", "地区合计", "上游", "中游", "下游"], capRows), 5)}
       ${panel("工程说明", "本地静态Web项目", `<div class="method-list"><div>前端使用原生HTML/CSS/JS，采用DataV风格视觉语言：深色底、发光边框、矩阵热力、指标卡、联动筛选。</div><div>本地预览使用Python标准库HTTP服务，无需Node与联网依赖。</div><div>数据文件位于 <code>data/report_data.json</code>，构建脚本位于 <code>scripts/build_data.py</code>。</div></div>`, 12)}
