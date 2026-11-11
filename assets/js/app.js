@@ -38,6 +38,8 @@ let activeRegionScene = null;
 
 const $ = (selector) => document.querySelector(selector);
 const view = $("#view");
+const ACCESS_ACCOUNT = "visitor";
+const ACCESS_PASSWORD = "cufe2026";
 
 function esc(value) {
   return String(value ?? "")
@@ -2630,4 +2632,31 @@ async function init() {
   }
 }
 
-init();
+function initLogin() {
+  const loginForm = $("#loginForm");
+  const loginScreen = $("#loginScreen");
+  const appShell = $("#appShell");
+  const username = $("#username");
+  const password = $("#password");
+  const error = $("#loginError");
+
+  loginForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const isAuthorized = username.value.trim() === ACCESS_ACCOUNT && password.value === ACCESS_PASSWORD;
+    if (!isAuthorized) {
+      error.textContent = "账号或密码错误，请重新输入。";
+      password.value = "";
+      password.focus();
+      return;
+    }
+
+    error.textContent = "";
+    loginScreen.classList.add("is-leaving");
+    appShell.hidden = false;
+    appShell.removeAttribute("aria-hidden");
+    init();
+    window.setTimeout(() => loginScreen.remove(), 280);
+  });
+}
+
+initLogin();

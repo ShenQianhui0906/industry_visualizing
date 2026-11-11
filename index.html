@@ -7,8 +7,31 @@
     <link rel="stylesheet" href="assets/css/style.css" />
   </head>
   <body>
-    <div class="screen-grid" aria-hidden="true"></div>
-    <header class="topbar">
+    <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
+      <div class="login-grid" aria-hidden="true"></div>
+      <div class="login-card dv-border">
+        <div class="login-brand-mark" aria-hidden="true"></div>
+        <p class="login-eyebrow">AUTHORIZED VISITOR ACCESS</p>
+        <h2 id="loginTitle">访问账号登录</h2>
+        <p class="login-intro">请输入访问账号与密码。</p>
+        <form id="loginForm" class="login-form">
+          <label for="username">
+            <span>访问账号</span>
+            <input id="username" name="username" type="text" autocomplete="username" placeholder="请输入账号" required autofocus />
+          </label>
+          <label for="password">
+            <span>访问密码</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+          </label>
+          <p class="login-error" id="loginError" role="alert" aria-live="polite"></p>
+          <button class="login-submit" type="submit">登录并进入平台 <span aria-hidden="true">→</span></button>
+        </form>
+      </div>
+    </section>
+
+    <div id="appShell" class="app-shell" aria-hidden="true" hidden>
+      <div class="screen-grid" aria-hidden="true"></div>
+      <header class="topbar">
       <div class="brand">
         <span class="brand-mark"></span>
         <div>
@@ -22,16 +45,16 @@
       </div>
     </header>
 
-    <nav class="nav-tabs" aria-label="页面导航">
+      <nav class="nav-tabs" aria-label="页面导航">
       <button class="active" data-page="home">首页总览</button>
       <button data-page="region">区域总产出画像</button>
       <button data-page="evolution">区域产业联动分析</button>
       <button data-page="linkage">政策产业联动</button>
       <button data-page="topic">产业专题</button>
       <button data-page="methods">数据与方法</button>
-    </nav>
+      </nav>
 
-    <aside class="control-rack dv-border">
+      <aside class="control-rack dv-border">
       <label data-control="region">
         <span>地区</span>
         <select id="regionSelect"></select>
@@ -52,11 +75,11 @@
           <option value="dynamic">2017-2022动态</option>
         </select>
       </label>
-    </aside>
+      </aside>
 
-    <main id="view" class="view" tabindex="-1"></main>
+      <main id="view" class="view" tabindex="-1"></main>
 
-    <template id="panelTemplate">
+      <template id="panelTemplate">
       <section class="panel dv-border">
         <div class="panel-title">
           <span></span>
@@ -64,7 +87,8 @@
         </div>
         <div class="panel-body"></div>
       </section>
-    </template>
+      </template>
+    </div>
 
     <script src="assets/js/app.js" defer></script>
   </body>
